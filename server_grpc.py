@@ -11,7 +11,7 @@ class ChatService(chat_pb2_grpc.ChatServiceServicer):
         self.clients = {}
         self.clients_lock = threading.Lock()
         self.client_counter = 0
-        self.users = {}  # {username: password}
+        self.users = {}
         self.users_lock = threading.Lock()
         self.message_history = {}
         self.history_lock = threading.Lock()
@@ -19,11 +19,9 @@ class ChatService(chat_pb2_grpc.ChatServiceServicer):
     def _authenticate_user(self, username, password):
         with self.users_lock:
             if username not in self.users:
-                # Registra novo usuário
                 self.users[username] = password
                 return True, "Registrado"
             else:
-                # Verifica senha
                 if self.users[username] == password:
                     return True, "Autenticado"
                 return False, "Senha incorreta"
@@ -39,19 +37,18 @@ class ChatService(chat_pb2_grpc.ChatServiceServicer):
                 'text': text
             })
             
-            # Mantém apenas últimas 100 mensagens
             if len(self.message_history[username]) > 100:
                 self.message_history[username] = self.message_history[username][-100:]
     
     def _get_history(self, username):
         with self.history_lock:
             if username not in self.message_history or not self.message_history[username]:
-                return "Histórico vazio"
+                return "Historico vazio"
             
-            lines = [f"=== Histórico de {username} ==="]
+            lines = [f"Historico de {username}"]
             for msg in self.message_history[username][-20:]:
                 timestamp = datetime.fromisoformat(msg['timestamp']).strftime('%H:%M:%S')
-                msg_type = "VOCÊ" if msg['type'] == 'sent' else "RECV"
+                msg_type = "VOCE" if msg['type'] == 'sent' else "RECV"
                 lines.append(f"[{timestamp}] {msg_type}: {msg['text']}")
             
             return "\n".join(lines)
@@ -74,7 +71,6 @@ class ChatService(chat_pb2_grpc.ChatServiceServicer):
                 nonlocal username, authenticated
                 try:
                     for incoming in request_iterator:
-                        # Autenticação
                         if not authenticated:
                             if ':' not in incoming.text:
                                 client_queue.put(("Sistema", "Formato: USUARIO:SENHA"))
@@ -106,13 +102,11 @@ class ChatService(chat_pb2_grpc.ChatServiceServicer):
                             
                             continue
                         
-                        # Comando de histórico
                         if incoming.text.strip().lower() == "/hist":
                             history = self._get_history(username)
                             client_queue.put(("Sistema", history))
                             continue
                         
-                        # Mensagem normal
                         self._save_message(username, incoming.text, is_sent=True)
                         self.broadcast_with_history(username, incoming.text, exclude_client=client_id)
                         
@@ -124,7 +118,6 @@ class ChatService(chat_pb2_grpc.ChatServiceServicer):
             receive_thread = threading.Thread(target=receive_messages)
             receive_thread.start()
             
-            # Envia mensagens da fila para o cliente
             while context.is_active():
                 try:
                     msg = client_queue.get(timeout=1.0)
@@ -145,5 +138,58 @@ class ChatService(chat_pb2_grpc.ChatServiceServicer):
             pass
             
         finally:
-            # Limpeza ao desconectar
             saved_username = None
+            should_notify = False
+            
+            with self.clients_lock:
+                if client_id in self.clients:
+                    _, saved_username = self.clients[client_id]
+                    del self.clients[client_id]
+                    
+                    if saved_username and authenticated:
+                        should_notify = True
+            
+            if should_notify:
+                self.broadcast("Sistema", f"{saved_username} saiu", exclude_client=client_id)
+    
+    def broadcast(self, username, text, exclude_client=None):
+        message = (username, text)
+        
+        with self.clients_lock:
+            for client_id, (client_queue, _) in self.clients.items():
+                if exclude_client is not None and client_id == exclude_client:
+                    continue
+                
+                try:
+                    client_queue.put_nowait(message)
+                except:
+                    pass
+    
+    def broadcast_with_history(self, sender_username, text, exclude_client=None):
+        message = (sender_username, text)
+        
+        with self.clients_lock:
+            for client_id, (client_queue, receiver_username) in self.clients.items():
+                if exclude_client is not None and client_id == exclude_client:
+                    continue
+                
+                if receiver_username is None:
+                    continue
+                
+                try:
+                    self._save_message(receiver_username, f"{sender_username}: {text}", is_sent=False)
+                    client_queue.put_nowait(message)
+                except:
+                    pass
+
+
+def serve(port=50051):
+    server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=10),
+        options=[
+            ('grpc.keepalive_time_ms', 10000),
+            ('grpc.keepalive_timeout_ms', 5000),
+        ]
+    )
+    
+    chat_service = ChatService()
