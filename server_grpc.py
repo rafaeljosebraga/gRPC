@@ -193,3 +193,17 @@ def serve(port=50051):
     )
     
     chat_service = ChatService()
+    chat_pb2_grpc.add_ChatServiceServicer_to_server(chat_service, server)
+    server.add_insecure_port(f'[::]:{port}')
+    server.start()
+    
+    print(f"Servidor rodando na porta {port}")
+    
+    try:
+        server.wait_for_termination()
+    except KeyboardInterrupt:
+        server.stop(grace=5)
+
+
+if __name__ == "__main__":
+    serve()
