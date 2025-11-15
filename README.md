@@ -33,9 +33,6 @@ Conecte-se ao servidor:
 ```bash
 # Conexão local (padrão)
 python client_grpc.py
-
-# Conexão remota
-python client_grpc.py IP:PORTA
 ```
 
 O cliente conecta em `localhost:50051` por padrão.
@@ -59,7 +56,7 @@ Digite suas mensagens normalmente e pressione Enter para enviá-las.
 
 | Comando | Descrição |
 |---------|-----------|
-| `/hist` | Exibe as últimas 20 mensagens do seu histórico |
+| `/hist` | Exibe as últimas no histórico |
 | `/quit` | Sair do chat |
 
 ## Exemplo de Uso
